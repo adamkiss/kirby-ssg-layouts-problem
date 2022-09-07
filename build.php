@@ -17,3 +17,5 @@ $staticSiteGenerator->setCustomRoutes([
 $fileList = $staticSiteGenerator->generate($outputFolder = '__build', $baseUrl = '/', $preserve = []);
 
 echo A::join($fileList, "\n");
+
+// ray(page('error')->render());
