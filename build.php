@@ -18,4 +18,9 @@ $fileList = $staticSiteGenerator->generate($outputFolder = '__build', $baseUrl =
 
 echo A::join($fileList, "\n");
 
-// ray(page('error')->render());
+$page = page('error');
+echo $page->render();
+echo page('error')->render();
+echo page('error')->render([
+    'page' => $page,
+]);
