@@ -139,12 +139,12 @@ class Session
 		if ($this->tokenExpiry !== null) {
 			if (is_string($this->tokenKey)) {
 				return $this->tokenExpiry . '.' . $this->tokenId . '.' . $this->tokenKey;
-			} else {
-				return $this->tokenExpiry . '.' . $this->tokenId;
 			}
-		} else {
-			return null;
+
+			return $this->tokenExpiry . '.' . $this->tokenId;
 		}
+
+		return null;
 	}
 
 	/**
@@ -339,7 +339,11 @@ class Session
 		 * @todo The $this->destroyed check gets flagged by Psalm for unknown reasons
 		 * @psalm-suppress ParadoxicalCondition
 		 */
-		if ($this->writeMode !== true || $this->tokenExpiry === null || $this->destroyed === true) {
+		if (
+			$this->writeMode !== true ||
+			$this->tokenExpiry === null ||
+			$this->destroyed === true
+		) {
 			return;
 		}
 
@@ -523,7 +527,11 @@ class Session
 		 * @todo The $this->destroyed check gets flagged by Psalm for unknown reasons
 		 * @psalm-suppress ParadoxicalCondition
 		 */
-		if ($this->tokenExpiry === null || $this->destroyed === true || $this->writeMode === true) {
+		if (
+			$this->tokenExpiry === null ||
+			$this->destroyed === true ||
+			$this->writeMode === true
+		) {
 			return;
 		}
 
@@ -611,12 +619,15 @@ class Session
 		// now make sure that we have a valid timestamp
 		if (is_int($time)) {
 			return $time;
-		} else {
-			throw new InvalidArgumentException([
-				'data'      => ['method' => 'Session::timeToTimestamp', 'argument' => '$time'],
-				'translate' => false
-			]);
 		}
+
+		throw new InvalidArgumentException([
+			'data' => [
+				'method'   => 'Session::timeToTimestamp',
+				'argument' => '$time'
+			],
+			'translate' => false
+		]);
 	}
 
 	/**
@@ -727,7 +738,7 @@ class Session
 		$this->renewable    = $data['renewable'];
 
 		// reload data into existing object to avoid breaking memory references
-		if (is_a($this->data, 'Kirby\Session\SessionData')) {
+		if ($this->data instanceof SessionData) {
 			$this->data()->reload($data['data']);
 		} else {
 			$this->data = new SessionData($this, $data['data']);

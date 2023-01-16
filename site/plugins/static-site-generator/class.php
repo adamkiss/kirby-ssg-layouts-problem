@@ -24,10 +24,13 @@ class StaticSiteGenerator
   protected $_originalBaseUrl;
   protected $_defaultLanguage;
   protected $_languages;
+  protected $_ignoreUntranslatedPages = false;
 
   protected $_skipCopyingMedia = false;
 
   protected $_customRoutes = [];
+
+  protected $_indexFileName = 'index.html';
 
   public function __construct(App $kirby, array $pathsToCopy = null, Pages $pages = null)
   {
@@ -70,7 +73,7 @@ class StaticSiteGenerator
     $homePage = $this->_pages->findBy('isHomePage', 'true');
     if ($homePage) {
       $this->_setPageLanguage($homePage, $this->_defaultLanguage ? $this->_defaultLanguage->code() : null);
-      $this->_generatePage($homePage, $this->_outputFolder . '/index.html', $baseUrl);
+      $this->_generatePage($homePage, $this->_outputFolder . '/' . $this->_indexFileName, $baseUrl);
     }
 
     foreach ($this->_languages as $languageCode) {
@@ -102,6 +105,20 @@ class StaticSiteGenerator
     $this->_customRoutes = $customRoutes;
   }
 
+  public function setIgnoreUntranslatedPages(bool $ignoreUntranslatedPages)
+  {
+    $this->_ignoreUntranslatedPages = $ignoreUntranslatedPages;
+  }
+
+  public function setIndexFileName(string $indexFileName) {
+    $indexFileName = preg_replace('/[^a-z0-9.]/i', '', $indexFileName);
+    if (!preg_replace('/[.]/', '', $indexFileName)) {
+      return;
+    }
+
+    $this->_indexFileName = $indexFileName;
+  }
+
   protected function _setOriginalBaseUrl()
   {
     if (!$this->_kirby->urls()->base()) {
@@ -131,9 +148,13 @@ class StaticSiteGenerator
   {
     foreach ($this->_pages->keys() as $key) {
       $page = $this->_pages->$key;
+      if($this->_ignoreUntranslatedPages && !$page->translation($languageCode)->exists()){
+        continue;
+      }
+
       $this->_setPageLanguage($page, $languageCode);
       $path = str_replace($this->_originalBaseUrl, '/', $page->url());
-      $path = $this->_cleanPath($this->_outputFolder . $path . '/index.html');
+      $path = $this->_cleanPath($this->_outputFolder . $path . '/' . $this->_indexFileName);
       try {
         $this->_generatePage($page, $path, $baseUrl);
       } catch (ErrorException $error) {
@@ -142,10 +163,25 @@ class StaticSiteGenerator
     }
   }
 
+  protected function _getRouteContent(string $routePath)
+  {
+    if (!$routePath) {
+      return null;
+    }
+
+    $routeResult = kirby()->router()->call($routePath, 'GET');
+    if ($routeResult instanceof \Kirby\Http\Response) {
+      $routeResult = $routeResult->body();
+    }
+
+    return is_string($routeResult) ? $routeResult : null;
+  }
+
   protected function _generateCustomRoute(string $baseUrl, array $route)
   {
     $path = A::get($route, 'path');
     $page = A::get($route, 'page');
+    $routePath = A::get($route, 'route');
     $baseUrl = A::get($route, 'baseUrl', $baseUrl);
     $data = A::get($route, 'data', []);
     $languageCode = A::get($route, 'languageCode');
@@ -154,13 +190,19 @@ class StaticSiteGenerator
       $page = page($page);
     }
 
-    if (!$path || !$page) {
+    $routeContent = $page ? null : $this->_getRouteContent($routePath ?: $path);
+
+    if (!$path || (!$page && !$routeContent)) {
       return;
     }
 
-    $path = $this->_cleanPath($this->_outputFolder . '/' . $path . '/index.html');
+    if (!$page) {
+      $page = new Page(['slug' => 'static-site-generator/' . uniqid()]);
+    }
+
+    $path = $this->_cleanPath($this->_outputFolder . '/' . $path . '/' . $this->_indexFileName);
     $this->_setPageLanguage($page, $languageCode);
-    $this->_generatePage($page, $path, $baseUrl, $data);
+    $this->_generatePage($page, $path, $baseUrl, $data, $routeContent);
   }
 
   protected function _setPageLanguage(Page $page, string $languageCode = null)
@@ -199,19 +241,19 @@ class StaticSiteGenerator
     })->bindTo($this->_kirby, 'Kirby\\Cms\\App')($this->_kirby);
   }
 
-  protected function _generatePage(Page $page, string $path, string $baseUrl, array $data = [])
+  protected function _generatePage(Page $page, string $path, string $baseUrl, array $data = [], string $content = null)
   {
     $page->setSite(null);
-    $html = $page->render($data);
+    $content = $content ?: $page->render($data);
 
     $jsonOriginalBaseUrl = trim(json_encode($this->_originalBaseUrl), '"');
     $jsonBaseUrl = trim(json_encode($baseUrl), '"');
-    $html = str_replace($this->_originalBaseUrl . '/', $baseUrl, $html);
-    $html = str_replace($this->_originalBaseUrl, $baseUrl, $html);
-    $html = str_replace($jsonOriginalBaseUrl . '\\/', $jsonBaseUrl, $html);
-    $html = str_replace($jsonOriginalBaseUrl, $jsonBaseUrl, $html);
+    $content = str_replace($this->_originalBaseUrl . '/', $baseUrl, $content);
+    $content = str_replace($this->_originalBaseUrl, $baseUrl, $content);
+    $content = str_replace($jsonOriginalBaseUrl . '\\/', $jsonBaseUrl, $content);
+    $content = str_replace($jsonOriginalBaseUrl, $jsonBaseUrl, $content);
 
-    F::write($path, $html);
+    F::write($path, $content);
 
     $this->_fileList = array_unique(array_merge($this->_fileList, [$path]));
   }
@@ -330,8 +372,8 @@ class StaticSiteGenerator
   protected function _cleanPath(string $path): string
   {
     $path = str_replace('//', '/', $path);
-    $path = preg_replace('/([^\/]+\.[a-z]{2,5})\/index.html$/i', '$1', $path);
-    $path = preg_replace('/(\.[^\/.]+)\/index.html$/i', '$1', $path);
+    $path = preg_replace('/([^\/]+\.[a-z]{2,5})\/' . $this->_indexFileName . '$/i', '$1', $path);
+    $path = preg_replace('/(\.[^\/.]+)\/' . $this->_indexFileName . '$/i', '$1', $path);
 
     if (strpos($path, '//') !== false) {
       return $this->_cleanPath($path);
@@ -359,7 +401,7 @@ class StaticSiteGenerator
       return str_replace($folder . DIRECTORY_SEPARATOR, '', $path);
     }, $this->_getFileList($folder));
 
-    if (in_array('index.html', $fileList) || in_array('.kirbystatic', $fileList)) {
+    if (in_array($this->_indexFileName, $fileList) || in_array('.kirbystatic', $fileList)) {
       return;
     }
 

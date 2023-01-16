@@ -1,8 +1,3 @@
-<?php
-	layout();
-	slot('content');
-?>
+<?php snippet('layout', slots: true) ?>
 
 <h1><?= $page->title() ?></h1>
-
-<?php endslot() ?>

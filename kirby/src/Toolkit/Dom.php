@@ -9,6 +9,7 @@ use DOMDocumentType;
 use DOMElement;
 use DOMNode;
 use DOMProcessingInstruction;
+use DOMText;
 use DOMXPath;
 use Kirby\Cms\App;
 use Kirby\Exception\Exception;
@@ -68,12 +69,6 @@ class Dom
 		$this->doc  = new DOMDocument();
 
 		$loaderSetting = null;
-		if (\PHP_VERSION_ID < 80000) {
-			// prevent loading external entities to protect against XXE attacks;
-			// only needed for PHP versions before 8.0 (the function was deprecated
-			// as the disabled state is the new default in PHP 8.0+)
-			$loaderSetting = libxml_disable_entity_loader(true);
-		}
 
 		// switch to "user error handling"
 		$intErrorsSetting = libxml_use_internal_errors(true);
@@ -104,12 +99,6 @@ class Dom
 			}
 		} else {
 			$load = $this->doc->loadXML($code);
-		}
-
-		if (\PHP_VERSION_ID < 80000) {
-			// ensure that we don't alter global state by
-			// resetting the original value
-			libxml_disable_entity_loader($loaderSetting);
 		}
 
 		// get one error for use below and reset the global state
@@ -442,14 +431,11 @@ class Dom
 	 * @param \Closure|null Comparison callback that returns whether the expected and real name match
 	 * @return string|false Matched name in the list or `false`
 	 */
-	public static function listContainsName(array $list, DOMNode $node, array $options, ?Closure $compare = null)
+	public static function listContainsName(array $list, DOMNode $node, array $options, Closure|null $compare = null)
 	{
 		$allowedNamespaces = $options['allowedNamespaces'];
 		$localName         = $node->localName;
-
-		if ($compare === null) {
-			$compare = fn ($expected, $real): bool => $expected === $real;
-		}
+		$compare         ??= fn ($expected, $real): bool => $expected === $real;
 
 		// if the configuration does not define namespace URIs or if the
 		// currently checked node is from the special `xml:` namespace
@@ -589,7 +575,7 @@ class Dom
 		// convert the `DOMNodeList` to an array first, otherwise removing
 		// nodes would shift the list and make subsequent operations fail
 		foreach (iterator_to_array($this->doc->childNodes, false) as $child) {
-			if (is_a($child, 'DOMDocumentType') === true) {
+			if ($child instanceof DOMDocumentType) {
 				$this->sanitizeDoctype($child, $options, $errors);
 			}
 		}
@@ -646,7 +632,7 @@ class Dom
 		foreach ($node->childNodes as $childNode) {
 			// discard text nodes as they can be unexpected
 			// directly in the parent element
-			if (is_a($childNode, 'DOMText') === true) {
+			if ($childNode instanceof DOMText) {
 				continue;
 			}
 
@@ -671,7 +657,7 @@ class Dom
 		$metaTag = $this->doc->createElement('meta');
 		$metaTag->setAttribute('http-equiv', 'Content-Type');
 		$metaTag->setAttribute('content', 'text/html; charset=utf-8');
-		$metaTag->setAttribute('id', $metaId = Str::random(10));
+		$metaTag->setAttribute('id', Str::random(10));
 		$this->doc->insertBefore($metaTag, $this->doc->documentElement);
 
 		if (
@@ -720,9 +706,7 @@ class Dom
 		// ensure that the document is encoded as UTF-8
 		// unless a different encoding was specified in
 		// the input or before exporting
-		if ($this->doc->encoding === null) {
-			$this->doc->encoding = 'UTF-8';
-		}
+		$this->doc->encoding ??= 'UTF-8';
 
 		return trim($this->doc->saveXML());
 	}

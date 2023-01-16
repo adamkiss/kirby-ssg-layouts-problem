@@ -13,6 +13,8 @@ use Kirby\Form\Form;
 use Kirby\Toolkit\A;
 use Kirby\Toolkit\I18n;
 use Kirby\Toolkit\Str;
+use Kirby\Uuid\Uuid;
+use Kirby\Uuid\Uuids;
 
 /**
  * PageActions
@@ -25,6 +27,75 @@ use Kirby\Toolkit\Str;
  */
 trait PageActions
 {
+	/**
+	 * Adapts necessary modifications which page uuid, page slug and files uuid
+	 * of copy objects for single or multilang environments
+	 */
+	protected function adaptCopy(Page $copy, bool $files = false, bool $children = false): Page
+	{
+		if ($this->kirby()->multilang() === true) {
+			foreach ($this->kirby()->languages() as $language) {
+				// overwrite with new UUID for the page and files
+				// for default language (remove old, add new)
+				if (
+					Uuids::enabled() === true &&
+					$language->isDefault() === true
+				) {
+					$copy = $copy->save(['uuid' => Uuid::generate()], $language->code());
+
+					// regenerate UUIDs of page files
+					if ($files !== false) {
+						foreach ($copy->files() as $file) {
+							$file->save(['uuid' => Uuid::generate()], $language->code());
+						}
+					}
+
+					// regenerate UUIDs of all page children
+					if ($children !== false) {
+						foreach ($copy->index(true) as $child) {
+							// always adapt files of subpages as they are currently always copied;
+							// but don't adapt children because we already operate on the index
+							$this->adaptCopy($child, true);
+						}
+					}
+				}
+
+				// remove all translated slugs
+				if (
+					$language->isDefault() === false &&
+					$copy->translation($language)->exists() === true
+				) {
+					$copy = $copy->save(['slug' => null], $language->code());
+				}
+			}
+
+			return $copy;
+		}
+
+		// overwrite with new UUID for the page and files (remove old, add new)
+		if (Uuids::enabled() === true) {
+			$copy = $copy->save(['uuid' => Uuid::generate()]);
+
+			// regenerate UUIDs of page files
+			if ($files !== false) {
+				foreach ($copy->files() as $file) {
+					$file->save(['uuid' => Uuid::generate()]);
+				}
+			}
+
+			// regenerate UUIDs of all page children
+			if ($children !== false) {
+				foreach ($copy->index(true) as $child) {
+					// always adapt files of subpages as they are currently always copied;
+					// but don't adapt children because we already operate on the index
+					$this->adaptCopy($child, true);
+				}
+			}
+		}
+
+		return $copy;
+	}
+
 	/**
 	 * Changes the sorting number.
 	 * The sorting number must already be correct
@@ -88,10 +159,8 @@ trait PageActions
 		// in multi-language installations the slug for the non-default
 		// languages is stored in the text file. The changeSlugForLanguage
 		// method takes care of that.
-		if ($language = $this->kirby()->language($languageCode)) {
-			if ($language->isDefault() === false) {
-				return $this->changeSlugForLanguage($slug, $languageCode);
-			}
+		if ($this->kirby()->language($languageCode)?->isDefault() === false) {
+			return $this->changeSlugForLanguage($slug, $languageCode);
 		}
 
 		// if the slug stays exactly the same,
@@ -108,11 +177,12 @@ trait PageActions
 				'root'    => null
 			]);
 
+			// clear UUID cache recursively (for children and files as well)
+			$oldPage->uuid()?->clear(true);
+
 			if ($oldPage->exists() === true) {
 				// remove the lock of the old page
-				if ($lock = $oldPage->lock()) {
-					$lock->remove();
-				}
+				$oldPage->lock()?->remove();
 
 				// actually move stuff on disk
 				if (Dir::move($oldPage->root(), $newPage->root()) !== true) {
@@ -153,7 +223,7 @@ trait PageActions
 			throw new InvalidArgumentException('Use the changeSlug method to change the slug for the default language');
 		}
 
-		$arguments = ['page' => $this, 'slug' => $slug, 'languageCode' => $languageCode];
+		$arguments = ['page' => $this, 'slug' => $slug, 'languageCode' => $language->code()];
 		return $this->commit('changeSlug', $arguments, function ($page, $slug, $languageCode) {
 			// remove the slug if it's the same as the folder name
 			if ($slug === $page->uid()) {
@@ -182,16 +252,12 @@ trait PageActions
 	 */
 	public function changeStatus(string $status, int $position = null)
 	{
-		switch ($status) {
-			case 'draft':
-				return $this->changeStatusToDraft();
-			case 'listed':
-				return $this->changeStatusToListed($position);
-			case 'unlisted':
-				return $this->changeStatusToUnlisted();
-			default:
-				throw new InvalidArgumentException('Invalid status: ' . $status);
-		}
+		return match ($status) {
+			'draft'    => $this->changeStatusToDraft(),
+			'listed'   => $this->changeStatusToListed($position),
+			'unlisted' => $this->changeStatusToUnlisted(),
+			default    => throw new InvalidArgumentException('Invalid status: ' . $status)
+		};
 	}
 
 	/**
@@ -437,14 +503,8 @@ trait PageActions
 
 		$copy = $parentModel->clone()->findPageOrDraft($slug);
 
-		// remove all translated slugs
-		if ($this->kirby()->multilang() === true) {
-			foreach ($this->kirby()->languages() as $language) {
-				if ($language->isDefault() === false && $copy->translation($language)->exists() === true) {
-					$copy = $copy->save(['slug' => null], $language->code());
-				}
-			}
-		}
+		// normalize copy object
+		$copy = $this->adaptCopy($copy, $files, $children);
 
 		// add copy to siblings
 		static::updateParentCollections($copy, 'append', $parentModel);
@@ -465,13 +525,19 @@ trait PageActions
 		$props['template'] = $props['model'] = strtolower($props['template'] ?? 'default');
 		$props['isDraft']  = ($props['draft'] ?? true);
 
+		// make sure that a UUID gets generated and
+		// added to content right away
+		$props['content'] ??= [];
+
+		if (Uuids::enabled() === true) {
+			$props['content']['uuid'] ??= Uuid::generate();
+		}
+
 		// create a temporary page object
 		$page = Page::factory($props);
 
 		// create a form for the page
-		$form = Form::for($page, [
-			'values' => $props['content'] ?? []
-		]);
+		$form = Form::for($page, ['values' => $props['content']]);
 
 		// inject the content
 		$page = $page->clone(['content' => $form->strings(true)]);
@@ -554,9 +620,7 @@ trait PageActions
 					->count();
 
 				// default positioning at the end
-				if ($num === null) {
-					$num = $max;
-				}
+				$num ??= $max;
 
 				// avoid zeros or negative numbers
 				if ($num < 1) {
@@ -593,6 +657,9 @@ trait PageActions
 	public function delete(bool $force = false): bool
 	{
 		return $this->commit('delete', ['page' => $this, 'force' => $force], function ($page, $force) {
+			// clear UUID cache
+			$page->uuid()?->clear();
+
 			// delete all files individually
 			foreach ($page->files() as $file) {
 				$file->delete();
@@ -765,9 +832,9 @@ trait PageActions
 		foreach ($sorted as $key => $id) {
 			if ($id === $this->id()) {
 				continue;
-			} elseif ($sibling = $siblings->get($id)) {
-				$sibling->changeNum($key + 1);
 			}
+
+			$siblings->get($id)?->changeNum($key + 1);
 		}
 
 		$parent = $this->parentModel();
@@ -801,6 +868,25 @@ trait PageActions
 		}
 
 		return true;
+	}
+
+	/**
+	 * Stores the content on disk
+	 *
+	 * @internal
+	 * @param array|null $data
+	 * @param string|null $languageCode
+	 * @param bool $overwrite
+	 * @return static
+	 */
+	public function save(array $data = null, string $languageCode = null, bool $overwrite = false)
+	{
+		$page = parent::save($data, $languageCode, $overwrite);
+
+		// overwrite the updated page in the parent collection
+		static::updateParentCollections($page, 'set');
+
+		return $page;
 	}
 
 	/**
@@ -862,7 +948,10 @@ trait PageActions
 		$page = parent::update($input, $languageCode, $validate);
 
 		// if num is created from page content, update num on content update
-		if ($page->isListed() === true && in_array($page->blueprint()->num(), ['zero', 'default']) === false) {
+		if (
+			$page->isListed() === true &&
+			in_array($page->blueprint()->num(), ['zero', 'default']) === false
+		) {
 			$page = $page->changeNum($page->createNum());
 		}
 

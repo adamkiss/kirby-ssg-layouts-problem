@@ -33,10 +33,12 @@ Alternatively, create a `static-site-generator` folder in `site/plugins`, downlo
 
 ## What doesn't work
 
-- Dynamic routes
+- Dynamic routes (unless when called by custom route - click [here](#custom-routes) for more information)
 - Query parameters (unless processed by javascript)
 - Redirections / `die` or `exit` in the code (this also affects the compatibility with some other plugins)
+- Kirby paginations (only manual paginations via custom routes)
 - Directly opening the html files in the browser with the file protocol (absolute base url `/`)
+- Compatibility with other plugins that work with the `file::version` and `file::url` components
 
 ## How to use it
 
@@ -50,6 +52,7 @@ $fileList = $staticSiteGenerator->generate($outputFolder = './static', $baseUrl 
 - `$pathsToCopy`: if not given, `$kirby->roots()->assets()` is used; set to `[]` to skip copying other files than media
 - `$pages`: if not given, all pages are rendered
 - use `$preserve` to preserve individual files or folders in your output folder, e.g. if you want to preserve a `README.md` in your output folder, set `$preserve`to `['README.md']`; any files or folders directly in the root level and starting with `.` are always preserved (e.g. `.git`)
+- The `D4L\StaticSiteGenerator` class offers a couple of public methods that allow to make further configuration changes.
 
 ### 2) By triggering an endpoint
 
@@ -78,8 +81,10 @@ return [
         'base_url' => '/', # if the static site is not mounted to the root folder of your domain, change accordingly here
         'skip_media' => false, # set to true to skip copying media files, e.g. when they are already on a CDN; combinable with 'preserve' => ['media']
         'skip_templates' => [], # ignore pages with given templates (home is always rendered)
-        'custom_routes' => [] # see below for more information on custom routes
-        'custom_filters' => [] # see below for more information on custom filters
+        'custom_routes' => [], # see below for more information on custom routes
+        'custom_filters' => [], # see below for more information on custom filters
+        'ignore_untranslated_pages' => false, # set to true to ignore pages without an own language
+        'index_file_name' => 'index.html' # you can change the directory index file name, e.g. to 'index.json' when generating an API
       ]
     ]
 ];
@@ -103,17 +108,24 @@ error: Custom error message
 
 You can also use this plugin to render custom routes. This way, e.g. paginations can be created programmatically.
 
-Custom routes are passed as an array. Each item must contain `path` and `page` properties.
+Custom routes are passed as an array. Each item must contain at least a `path` property and if the path does not match a route, either the `page` or `route` property must be set.
 
 Here is an example array, showing the different configuration options:
 
 ```php
 $customRoutes = [
-  [ // minimal configuration
+  [ // minimal configuration to render a route (must match, else skipped)
+    'path' => 'my/route',
+  ],
+  [ // minimal configuration to render a page
     'path' => 'foo/bar',
     'page' => 'some-page-id'
   ],
-  [ // advanced configuration
+  [ // advanced configuration to render a route (write to different path)
+    'path' => 'sitemap.xml',
+    'route' => 'my/sitemap/route'
+  ],
+  [ // advanced configuration to render a page
     'path' => 'foo/baz',
     'page' => page('some-page-id'),
     'languageCode' => 'en',
@@ -124,6 +136,8 @@ $customRoutes = [
   ]
 ];
 ```
+
+Only `GET` routes without `language` scope are supported (you can of course add multiple custom routes for multiple languages). Patterns and action arguments are supported.
 
 `page` is provided as a string containing the page ID, or as a page object.
 
